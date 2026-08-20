@@ -5,13 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   python-ci:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - name: Check out repository
@@ -49,7 +52,18 @@ jobs:
       - name: Verify Python sources compile
         shell: bash
         run: |
-          mapfile -t python_files < <(find . -path ./.git -prune -o -name '*.py' -print)
+          mapfile -t python_files < <(
+            find . \
+              -type f -name '*.py' \
+              ! -path './.git/*' \
+              ! -path './venv/*' \
+              ! -path './.venv/*' \
+              ! -path './dist/*' \
+              ! -path './build/*' \
+              ! -path './__pycache__/*' \
+              ! -path './.eggs/*' \
+              ! -path '*.egg-info/*'
+          )
 
           if [ "${#python_files[@]}" -eq 0 ]; then
             echo "No Python files found to validate."
@@ -61,16 +75,24 @@ jobs:
       - name: Run test suite when present
         shell: bash
         run: |
-          if [ -f tox.ini ]; then
-            pip install tox
-            tox
-            exit 0
+          if [ -f tox.ini ] || \
+            { [ -f setup.cfg ] && grep -Eq '^\[tox([:.][^]]+)?\]$' setup.cfg; } || \
+            { [ -f pyproject.toml ] && grep -Eq '^\[tool\.tox(\.[^]]+)?\]$' pyproject.toml; }; then
+            pip install "tox>=4"
+            tox --skip-missing-interpreters
+          elif find . \
+            -type f \( -name 'test_*.py' -o -name '*_test.py' -o -name 'conftest.py' \) \
+            ! -path './.git/*' \
+            ! -path './venv/*' \
+            ! -path './.venv/*' \
+            ! -path './dist/*' \
+            ! -path './build/*' \
+            ! -path './__pycache__/*' \
+            ! -path './.eggs/*' \
+            ! -path '*.egg-info/*' \
+            -print -quit | grep -q .; then
+            pip install "pytest>=7,<9"
+            python -m pytest
+          else
+            echo "No automated tests found."
           fi
-
-          if [ -d tests ] || find . -path ./.git -prune -o -name 'test_*.py' -print -quit | grep -q .; then
-            pip install pytest
-            pytest
-            exit 0
-          fi
-
-          echo "No automated tests found."
